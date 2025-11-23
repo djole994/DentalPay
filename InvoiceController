@@ -1,0 +1,212 @@
+[HttpPost]
+public async Task<IActionResult> Create(InvoiceCreateViewModel model)
+{
+    // Trim IdUputnice
+    if (!string.IsNullOrWhiteSpace(model.IdUputnice))
+        model.IdUputnice = model.IdUputnice.Trim();
+
+    if (!ModelState.IsValid)
+        return View(model);
+
+    // Tip fakture: 5 ili 14 (različita pravila)
+    if (model.InvoiceTip == 5)
+    {
+        if (string.IsNullOrWhiteSpace(model.Account_number) || model.Account_number.Length != 9)
+            ModelState.AddModelError("", "Broj računa (9 cifara) je obavezan za fakturu tip 5.");
+
+        if (!model.Handover.HasValue)
+            ModelState.AddModelError("", "Handover datum je obavezan za fakturu tip 5.");
+    }
+    else if (model.InvoiceTip == 14)
+    {
+        model.Account_number = null;
+        model.Handover = null;
+
+        if (string.IsNullOrEmpty(model.CoverageCode))
+            ModelState.AddModelError("", "Vid osiguranja je obavezan za fakturu tip 14.");
+    }
+    else
+    {
+        ModelState.AddModelError("", "Tip fakture mora biti 5 ili 14.");
+    }
+
+    if (!ModelState.IsValid)
+        return View(model);
+
+    // Obavezna ustanova i doktor uputilac
+    if (!model.ReferringFacilityId.HasValue)
+        ModelState.AddModelError("", "Ustanova uputilac je obavezna.");
+
+    if (!model.ReferringDoctorId.HasValue)
+        ModelState.AddModelError("", "Doktor uputilac je obavezan.");
+
+    if (!ModelState.IsValid)
+        return View(model);
+
+    // Pacijent po JMBG, po potrebi kreiram novog
+    DateTime? dateOfBirth = ParseJMBG(model.JMBG);
+    var patient = await _context.Patients
+        .FirstOrDefaultAsync(p => p.Jmbg == model.JMBG);
+
+    if (patient == null)
+    {
+        if (string.IsNullOrEmpty(model.PatientFirstName) || string.IsNullOrEmpty(model.PatientLastName))
+        {
+            ModelState.AddModelError("", "Pacijent nije pronađen, a nisu unijeti ime i prezime.");
+            return View(model);
+        }
+
+        if (!dateOfBirth.HasValue)
+            dateOfBirth = new DateTime(1980, 1, 1);
+
+        patient = new Patient
+        {
+            Jmbg = model.JMBG,
+            FirstName = model.PatientFirstName,
+            LastName = model.PatientLastName,
+            DateOfBirth = dateOfBirth.Value
+        };
+
+        _context.Patients.Add(patient);
+        await _context.SaveChangesAsync();
+    }
+
+    // Coverage
+    var coverageType = await _context.CoverageTypes
+        .FirstOrDefaultAsync(ct => ct.CoverageCode == model.CoverageCode);
+
+    if (coverageType == null)
+    {
+        ModelState.AddModelError("", "Nepoznat vid osiguranja.");
+        return View(model);
+    }
+
+    // Doktor, dijagnoza, ustanova uputilac, doktor uputilac
+    var doctor = await _context.Doctors.FindAsync(model.DoctorId);
+    if (doctor == null)
+    {
+        ModelState.AddModelError("", "Doktor (odjeljenje) sa datim ID-jem ne postoji.");
+        return View(model);
+    }
+
+    var diagnosis = await _context.Diagnoses
+        .FirstOrDefaultAsync(d => d.DiagnosisCode == model.DiagnosisCode);
+
+    if (diagnosis == null)
+    {
+        ModelState.AddModelError("", "Uneseni šifarnik dijagnoze ne postoji u bazi.");
+        return View(model);
+    }
+
+    if (!model.ReferringFacilityId.HasValue ||
+        await _context.ReferringFacilities.FindAsync(model.ReferringFacilityId.Value) == null)
+    {
+        ModelState.AddModelError("", "Odabrana ustanova uputilac ne postoji u bazi.");
+        return View(model);
+    }
+
+    if (!model.ReferringDoctorId.HasValue ||
+        await _context.ReferringDoctors.FindAsync(model.ReferringDoctorId.Value) == null)
+    {
+        ModelState.AddModelError("", "Odabrani doktor uputilac ne postoji u bazi.");
+        return View(model);
+    }
+
+    // Jedinstven IdUputnice
+    if (await _context.Invoices.AnyAsync(i => i.IdUputnice == model.IdUputnice))
+    {
+        ModelState.AddModelError(nameof(model.IdUputnice), "Ovaj Id uputnice već postoji.");
+        return View(model);
+    }
+
+    var invoice = new Invoice
+    {
+        InvoiceNumber = model.InvoiceNumber ?? "",
+        InvoiceDate = model.InvoiceDate,
+        InvoiceTip = model.InvoiceTip,
+        IdUputnice = model.IdUputnice,
+        CoverageTypeId = coverageType.CoverageTypeId,
+        OrgUnit = "Stomatologija",
+        PatientId = patient.PatientId,
+        DiagnosisId = diagnosis.Id,
+        DoctorId = model.DoctorId,
+        ReferringFacilityId = model.ReferringFacilityId.Value,
+        ReferringDoctorId = model.ReferringDoctorId.Value,
+        Account_number = model.Account_number,
+        Handover = model.Handover
+    };
+
+    _context.Invoices.Add(invoice);
+    await _context.SaveChangesAsync();
+
+    decimal totalFund = 0;
+    decimal totalPatient = 0;
+
+    foreach (var item in model.Items)
+    {
+        var service = await _context.Services
+            .FirstOrDefaultAsync(s => s.ServiceCode == item.ServiceCode);
+
+        if (service == null)
+        {
+            ModelState.AddModelError("", $"Usluga sa šifrom {item.ServiceCode} ne postoji.");
+            return View(model);
+        }
+
+        decimal fundPrice = 0m;
+        decimal patientPrice = service.BasePrice;
+
+        var coverageRule = await _context.ServiceCoverageRules
+            .FirstOrDefaultAsync(cr => cr.ServiceId == service.ServiceId &&
+                                       cr.CoverageTypeId == coverageType.CoverageTypeId);
+
+        if (coverageRule != null)
+        {
+            fundPrice = coverageRule.FundAmount;
+            patientPrice = coverageRule.PatientAmount;
+        }
+
+        var fundTotal = fundPrice * item.Quantity;
+        var patientTotal = patientPrice * item.Quantity;
+
+        totalFund += fundTotal;
+        totalPatient += patientTotal;
+
+        _context.InvoiceItems.Add(new InvoiceItem
+        {
+            InvoiceId = invoice.InvoiceId,
+            ServiceId = service.ServiceId,
+            Quantity = item.Quantity,
+            FundAmount = fundTotal,
+            PatientAmount = patientTotal
+        });
+    }
+
+    await _context.SaveChangesAsync();
+
+    return RedirectToAction("Details", new { id = invoice.InvoiceId });
+}
+
+private DateTime? ParseJMBG(string jmbg)
+{
+    if (string.IsNullOrWhiteSpace(jmbg) || jmbg.Length < 7)
+        return null;
+
+    var datePart = jmbg.Substring(0, 7);
+
+    if (!int.TryParse(datePart.Substring(0, 2), out int day) ||
+        !int.TryParse(datePart.Substring(2, 2), out int month) ||
+        !int.TryParse(datePart.Substring(4, 3), out int yearSuffix))
+        return null;
+
+    int year = yearSuffix < 900 ? 2000 + yearSuffix : 1000 + yearSuffix;
+
+    try
+    {
+        return new DateTime(year, month, day);
+    }
+    catch
+    {
+        return null;
+    }
+}
