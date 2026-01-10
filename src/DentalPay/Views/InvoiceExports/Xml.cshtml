@@ -1,0 +1,124 @@
+@model DownloadXmlFormViewModel
+@{
+    ViewData["Title"] = "XML export faktura";
+}
+
+<div class="container py-4">
+
+    <div class="row justify-content-center">
+        <div class="col-12 col-lg-7">
+
+            <div class="d-flex align-items-center justify-content-between mb-3">
+                <div>
+                    <h3 class="mb-1">XML export</h3>
+                    <div class="text-muted">Izaberi period i tip fakture (5 ili 14).</div>
+                </div>
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(Model?.ErrorMessage))
+            {
+                <div class="alert alert-warning d-flex align-items-start" role="alert">
+                    <div class="me-2">⚠️</div>
+                    <div>@Model.ErrorMessage</div>
+                </div>
+            }
+
+            <div class="card shadow-sm border-0">
+                <div class="card-body p-4">
+
+                    <form asp-action="Xml"
+                          asp-controller="InvoiceExports"
+                          method="post"
+                          class="needs-validation"
+                          novalidate>
+
+                        @Html.AntiForgeryToken()
+
+                        <div class="row g-3">
+
+                            <div class="col-12 col-md-6">
+                                <div class="form-floating">
+                                    <input asp-for="DateOd"
+                                           type="date"
+                                           class="form-control"
+                                           placeholder="Od"
+                                           required />
+                                    <label asp-for="DateOd">Datum od</label>
+                                    <div class="invalid-feedback">Unesite datum od.</div>
+                                </div>
+                                <span asp-validation-for="DateOd" class="text-danger small"></span>
+                            </div>
+
+                            <div class="col-12 col-md-6">
+                                <div class="form-floating">
+                                    <input asp-for="DateDo"
+                                           type="date"
+                                           class="form-control"
+                                           placeholder="Do"
+                                           required />
+                                    <label asp-for="DateDo">Datum do</label>
+                                    <div class="invalid-feedback">Unesite datum do.</div>
+                                </div>
+                                <span asp-validation-for="DateDo" class="text-danger small"></span>
+                            </div>
+
+                            <div class="col-12">
+                                <div class="form-floating">
+                                    <select asp-for="TipFakture"
+                                            class="form-select"
+                                            required>
+                                        <option value="" selected disabled>Izaberite tip fakture…</option>
+                                        <option value="5">5 - Rješenje</option>
+                                        <option value="14">14 - Uputnica</option>
+                                    </select>
+                                    <label asp-for="TipFakture">Tip fakture</label>
+                                    <div class="invalid-feedback">Izaberite tip fakture (5 ili 14).</div>
+                                </div>
+                                <span asp-validation-for="TipFakture" class="text-danger small"></span>
+                            </div>
+
+                            <div class="col-12 d-grid d-md-flex gap-2 justify-content-md-end mt-2">
+                                <button type="submit" class="btn btn-primary px-4">
+                                    Preuzmi XML
+                                </button>
+                                <a class="btn btn-outline-secondary px-4"
+                                   href="@Url.Action("Xml", "InvoiceExports")">
+                                    Reset
+                                </a>
+                            </div>
+
+                        </div>
+                    </form>
+
+                    <hr class="my-4" />
+
+                    <div class="small text-muted">
+                        Napomena: Export uključuje samo zaključane fakture (IsLocked = true) i one koje imaju zbirni broj.
+                    </div>
+
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+
+    <script>
+        // Bootstrap client-side validation (bez jQuery)
+        (() => {
+            const form = document.querySelector('.needs-validation');
+            if (!form) return;
+
+            form.addEventListener('submit', (event) => {
+                if (!form.checkValidity()) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                }
+                form.classList.add('was-validated');
+            }, false);
+        })();
+    </script>
+}
