@@ -10,7 +10,7 @@ using Microsoft.Extensions.Options;
 public class InvoiceExportsController : Controller
 {
     private readonly StomatologijaContext _context;
-    private readonly XmlExportOptions _xml;
+    private readonly XmlExportOptions 
 
     public InvoiceExportsController(StomatologijaContext context, IOptions<XmlExportOptions> xmlOptions)
     {
